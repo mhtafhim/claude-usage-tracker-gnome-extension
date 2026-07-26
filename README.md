@@ -4,7 +4,7 @@ A tiny GNOME Shell extension that shows your Claude Pro/Max **5-hour** and **wee
 
 ## Why I built this
 
-I kept switching to the terminal or web app just to check how much of my Claude usage limit I had left. Doing that back and forth, over and over, got irritating fast. So I built this extension to put the numbers right in my GNOME top bar — no more manual checking.
+I kept switching over to `/usage` in Claude Code or digging into settings just to check how much of my usage limit was left. Doing that back and forth, over and over, got irritating fast. So I built this extension to put the numbers right in my GNOME top bar — no more manual checking.
 
 ## What it does
 
@@ -25,6 +25,8 @@ It reads the OAuth access token that the [Claude Code](https://github.com/anthro
 ## Installation
 
 ```bash
+git clone https://github.com/mhtafhim/claude-usage-tracker-gnome-extension.git
+cd claude-usage-tracker-gnome-extension
 mkdir -p ~/.local/share/gnome-shell/extensions/claude-usage@mhtafhim
 cp -r claude-usage@mhtafhim/* ~/.local/share/gnome-shell/extensions/claude-usage@mhtafhim/
 ```
@@ -42,6 +44,19 @@ gnome-extensions enable claude-usage@mhtafhim
 ## Configuration
 
 Refresh interval is set via `REFRESH_SECONDS` near the top of `extension.js`. Anthropic's usage endpoint rate-limits aggressively if polled too often — 60s is a safe middle ground.
+
+## Troubleshooting
+
+- **"Claude: no token"** — no credentials file found at `~/.claude/.credentials.json` or `~/.config/claude/credentials.json`. Run `claude login`.
+- **"Claude: err 401"** — token expired or invalid. Re-run `claude login`.
+- **Indicator missing after enabling** — check logs: `journalctl -f -o cat /usr/bin/gnome-shell` while reloading the shell.
+
+## Uninstall
+
+```bash
+gnome-extensions disable claude-usage@mhtafhim
+rm -rf ~/.local/share/gnome-shell/extensions/claude-usage@mhtafhim
+```
 
 ## Privacy
 
