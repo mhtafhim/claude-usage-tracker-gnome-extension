@@ -8,14 +8,10 @@ I kept switching over to `/usage` in Claude Code or digging into settings just t
 
 ## What it does
 
-- Shows a live `5h X%  ·  Wk Y%` indicator in the panel.
+- Shows a live `5h X%  ·  Wk Y%` indicator in the panel, each as a color-coded pill (green/purple/yellow/red by % used — see [spec](docs/superpowers/specs/2026-07-26-colored-pills-design.md) for thresholds).
 - Click it to see a dropdown with exact reset times for both the 5-hour session and weekly limit.
 - Refreshes automatically every 60 seconds (configurable in `extension.js`).
 - Manual "Refresh now" option in the dropdown.
-
-## Roadmap
-
-- **Colored usage pills** — color-coded background (green/purple/yellow/red by % used) for the 5-hour and weekly indicators, so severity is visible at a glance. Designed, not yet implemented — see [spec](docs/superpowers/specs/2026-07-26-colored-pills-design.md).
 
 ## How it works
 
