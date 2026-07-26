@@ -182,16 +182,14 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     }
 
     // A rate-limited or timed-out refresh shouldn't blank out numbers we
-    // already have: keep the pills and report the failure in the dropdown.
+    // already have: leave the pills and dropdown showing the last known
+    // values untouched, and only surface the failure when there's nothing
+    // to fall back on yet.
     _reportError(panelText, menuText) {
-        if (this._haveData) {
-            this._sessionItem.label.set_text(menuText);
-            this._weeklyItem.label.set_text('Showing last known values.');
-        } else {
-            this._showStatus(panelText);
-            this._sessionItem.label.set_text(menuText);
-            this._weeklyItem.label.set_text('—');
-        }
+        if (this._haveData) return;
+        this._showStatus(panelText);
+        this._sessionItem.label.set_text(menuText);
+        this._weeklyItem.label.set_text('—');
     }
 
     _showStatus(text) {
