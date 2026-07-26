@@ -72,11 +72,17 @@ function colorForPct(p) {
 const PILL_STYLE = 'border-radius: 8px; padding: 0 6px; margin: 0 2px; font-weight: bold;';
 const BLOCKED_STYLE = `background-color: rgb(231,76,60); color: #ffffff; ${PILL_STYLE}`;
 
+// Anthropic has been seen sending "retry-after: 0" on this endpoint, which
+// isn't a real wait time - treat missing/zero/garbage the same way and fall
+// back to a floor so we don't immediately hammer it again.
+// https://github.com/anthropics/claude-code/issues/30930
+const RATE_LIMIT_FLOOR_SECONDS = 60;
+
 function parseRetryAfter(message) {
     const raw = message.response_headers.get_one('Retry-After');
-    if (!raw) return null;
-    const seconds = parseInt(raw, 10);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+    const seconds = raw ? parseInt(raw, 10) : NaN;
+    if (!Number.isFinite(seconds) || seconds <= 0) return RATE_LIMIT_FLOOR_SECONDS;
+    return seconds;
 }
 
 function formatResetTime(iso) {
@@ -185,11 +191,8 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 // codes missing from the Soup.Status enum, such as 429.
                 const status = message.status_code;
                 if (status === 429) {
-                    const retryAfter = parseRetryAfter(message);
-                    if (retryAfter !== null) {
-                        this._startCountdown(retryAfter);
-                        return;
-                    }
+                    this._startCountdown(parseRetryAfter(message));
+                    return;
                 }
                 if (status !== 200) {
                     this._reportError(`Claude: err ${status}`, `Request failed (HTTP ${status}).`);
