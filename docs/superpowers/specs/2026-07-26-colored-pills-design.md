@@ -8,11 +8,14 @@ Panel indicator currently shows plain text (`5h X% · Wk Y%`) with no visual sev
 
 - Two independent pills in the top-bar indicator: one for the 5-hour session %, one for the weekly %.
 - Each pill's background color reflects its own percentage, independently of the other.
-- Color thresholds (inclusive upper bound):
-  - 0–50%: green
-  - 51–70%: purple
-  - 71–90%: yellow
-  - 91–100%: red
+- Color is a **continuous gradient**, not discrete bands. Anchor colors sit at fixed
+  percentages and the pill blends between them, so the color drifts toward the next
+  anchor as usage climbs:
+  - 0%: green
+  - 50%: purple
+  - 70%: yellow
+  - 90%: red
+  - 100%: deep red
 - Loading / no-token / error states keep plain text (no percentage to color, no pill).
 - Dropdown menu items (`5-hour session: …`, `Weekly: …`) are unchanged — text only, no color.
 
@@ -20,14 +23,18 @@ Panel indicator currently shows plain text (`5h X% · Wk Y%`) with no visual sev
 
 ### Color mapping
 
-```js
-function colorForPct(pct) {
-    if (pct <= 50) return {bg: '#27ae60', fg: '#ffffff'}; // green
-    if (pct <= 70) return {bg: '#8e44ad', fg: '#ffffff'}; // purple
-    if (pct <= 90) return {bg: '#f1c40f', fg: '#000000'}; // yellow, dark text for contrast
-    return {bg: '#e74c3c', fg: '#ffffff'};                // red
-}
-```
+`COLOR_STOPS` holds the anchors above as RGB triples. `colorForPct(p)` clamps `p`
+to 0–100, finds the bracketing pair of anchors, and interpolates between them.
+
+Interpolation happens in **linear light** (each channel raised to 2.2, mixed, then
+un-gamma'd) rather than straight sRGB, because a naive sRGB mix between two distant
+hues sags toward grey. Green and purple are near-complementary, so the 20–40% region
+is still relatively desaturated — that is inherent to blending those two hues, not a
+bug in the ramp.
+
+Foreground text color is derived, not fixed: `textColorFor(rgb)` computes perceived
+brightness (`0.299R + 0.587G + 0.114B`) and returns black above 0.6, white otherwise,
+so text stays readable on every blend.
 
 ### Panel indicator structure
 
@@ -50,6 +57,23 @@ background-color: <bg>; color: <fg>; border-radius: 8px; padding: 0 6px; margin:
 
 - On success: hide `_statusLabel`, show `_pillBox`. For each of session/weekly, if the value is available, set pill text and style; if unavailable (`N/A`), fall back to plain-text style (no colored background) so absence isn't mistaken for "0%, all green."
 - On loading/no-token/error: hide `_pillBox`, show `_statusLabel` with existing messages (unchanged behavior).
+
+### Resilience
+
+Two bugs surfaced in the journal once the extension ran for real, both fixed alongside
+the gradient:
+
+- `message.get_status()` throws `429 is not a valid value for enumeration Status` —
+  GJS marshals the return as a `Soup.Status` enum, and 429 is not a member. Read the
+  `status_code` property instead, which returns a plain integer. Verified against a
+  local server returning 429.
+- Async callbacks (`load_contents_async`, `send_and_read_async`) can land after the
+  indicator is destroyed, logging `has been already disposed`. `stop()` sets a
+  `_destroyed` flag that both callbacks check before touching any actor.
+
+A failed refresh no longer blanks the panel. Once `_haveData` is true the pills stay
+put and the failure is reported in the dropdown, so a transient rate-limit or timeout
+doesn't wipe numbers that are still roughly accurate.
 
 ## Out of scope
 

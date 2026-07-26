@@ -27,11 +27,46 @@ function pct(u) {
     return u <= 1 ? Math.round(u * 100) : Math.round(u);
 }
 
+// Gradient anchors. A pill sitting exactly on an anchor gets that pure color;
+// in between it blends toward the next one, so the color drifts continuously
+// as usage climbs.
+const COLOR_STOPS = [
+    {at: 0, rgb: [39, 174, 96]},    // green
+    {at: 50, rgb: [142, 68, 173]},  // purple
+    {at: 70, rgb: [241, 196, 15]},  // yellow
+    {at: 90, rgb: [231, 76, 60]},   // red
+    {at: 100, rgb: [192, 57, 43]},  // deep red
+];
+
+const GAMMA = 2.2;
+
+function textColorFor([r, g, b]) {
+    // Perceived brightness, so text stays readable on any blend.
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return lum > 0.6 ? '#000000' : '#ffffff';
+}
+
 function colorForPct(p) {
-    if (p <= 50) return {bg: '#27ae60', fg: '#ffffff'}; // green
-    if (p <= 70) return {bg: '#8e44ad', fg: '#ffffff'}; // purple
-    if (p <= 90) return {bg: '#f1c40f', fg: '#000000'}; // yellow, dark text for contrast
-    return {bg: '#e74c3c', fg: '#ffffff'};              // red
+    const c = Math.max(0, Math.min(100, p));
+    let lo = COLOR_STOPS[0];
+    let hi = COLOR_STOPS[COLOR_STOPS.length - 1];
+    for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
+        if (c >= COLOR_STOPS[i].at && c <= COLOR_STOPS[i + 1].at) {
+            lo = COLOR_STOPS[i];
+            hi = COLOR_STOPS[i + 1];
+            break;
+        }
+    }
+    const span = hi.at - lo.at;
+    const t = span === 0 ? 0 : (c - lo.at) / span;
+    // Blend in linear light rather than straight sRGB: mid-ramp colors come out
+    // brighter instead of sagging toward grey.
+    const rgb = lo.rgb.map((v, i) => {
+        const a = Math.pow(v / 255, GAMMA);
+        const b = Math.pow(hi.rgb[i] / 255, GAMMA);
+        return Math.round(255 * Math.pow(a + (b - a) * t, 1 / GAMMA));
+    });
+    return {bg: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, fg: textColorFor(rgb)};
 }
 
 const PILL_STYLE = 'border-radius: 8px; padding: 0 6px; margin: 0 2px; font-weight: bold;';
@@ -82,6 +117,8 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
         this._httpSession = new Soup.Session();
         this._timeoutId = null;
+        this._destroyed = false;
+        this._haveData = false;
 
         this._refresh();
         this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_SECONDS, () => {
@@ -109,7 +146,9 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
     async _refresh() {
         const token = await this._getToken();
+        if (this._destroyed) return;
         if (!token) {
+            this._haveData = false;
             this._showStatus('Claude: no token');
             this._sessionItem.label.set_text('No credentials file found.');
             this._weeklyItem.label.set_text('Run "claude login" first.');
@@ -122,11 +161,14 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         message.request_headers.append('User-Agent', 'claude-code/1.0.0');
 
         this._httpSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, result) => {
+            if (this._destroyed) return;
             try {
                 const bytes = session.send_and_read_finish(result);
-                const status = message.get_status();
+                // Read the property, not get_status(): GJS throws marshalling
+                // codes missing from the Soup.Status enum, such as 429.
+                const status = message.status_code;
                 if (status !== 200) {
-                    this._showStatus(`Claude: err ${status}`);
+                    this._reportError(`Claude: err ${status}`, `Request failed (HTTP ${status}).`);
                     return;
                 }
                 const text = new TextDecoder('utf-8').decode(bytes.get_data());
@@ -134,9 +176,22 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 this._updateUI(data);
             } catch (e) {
                 logError(e, 'ClaudeUsage: request failed');
-                this._showStatus('Claude: err');
+                this._reportError('Claude: err', 'Request failed. Will retry.');
             }
         });
+    }
+
+    // A rate-limited or timed-out refresh shouldn't blank out numbers we
+    // already have: keep the pills and report the failure in the dropdown.
+    _reportError(panelText, menuText) {
+        if (this._haveData) {
+            this._sessionItem.label.set_text(menuText);
+            this._weeklyItem.label.set_text('Showing last known values.');
+        } else {
+            this._showStatus(panelText);
+            this._sessionItem.label.set_text(menuText);
+            this._weeklyItem.label.set_text('—');
+        }
     }
 
     _showStatus(text) {
@@ -161,12 +216,14 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         const weekly = data.seven_day ? pct(data.seven_day.utilization) : null;
 
         if (session === null && weekly === null) {
+            this._haveData = false;
             this._showStatus('Claude: N/A');
         } else {
             this._setPill(this._sessionPill, '5h', session);
             this._setPill(this._weeklyPill, 'Wk', weekly);
             this._statusLabel.visible = false;
             this._pillBox.visible = true;
+            this._haveData = true;
         }
 
         if (session !== null) {
@@ -185,6 +242,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     }
 
     stop() {
+        this._destroyed = true;
         if (this._timeoutId) {
             GLib.source_remove(this._timeoutId);
             this._timeoutId = null;
