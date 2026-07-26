@@ -8,9 +8,9 @@ I kept switching over to `/usage` in Claude Code or digging into settings just t
 
 ## What it does
 
-- Shows a live `5h X%  ·  Wk Y%` indicator in the panel, each as a color-coded pill (green/purple/yellow/red by % used — see [spec](docs/superpowers/specs/2026-07-26-colored-pills-design.md) for thresholds).
+- Shows a live `5h X%  ·  Wk Y%` indicator in the panel.
 - Click it to see a dropdown with exact reset times for both the 5-hour session and weekly limit.
-- Refreshes automatically every 60 seconds (configurable in `extension.js`).
+- Refreshes automatically every 3 minutes (configurable in `extension.js`).
 - Manual "Refresh now" option in the dropdown.
 
 ## How it works
@@ -45,7 +45,7 @@ gnome-extensions enable claude-usage@mhtafhim
 
 Refresh interval is set via `REFRESH_SECONDS` near the top of `extension.js`. Anthropic's usage endpoint rate-limits aggressively if polled too often — 180s (3 min) is a safe middle ground.
 
-If the API returns a 429, the panel shows a red `Wait Xs` pill counting down the server's `Retry-After` value and retries automatically the moment it hits zero, instead of silently failing on the next scheduled poll.
+If the API returns a 429, the panel shows `Wait Xs`, counting down the server's `Retry-After` value (floored to 60s if it's missing or 0), and retries automatically the moment it hits zero instead of silently failing on the next scheduled poll.
 
 ## Troubleshooting
 

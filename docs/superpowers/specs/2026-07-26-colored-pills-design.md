@@ -1,5 +1,12 @@
 # Colored Usage Pills — Design
 
+> **Status: reverted.** Shipped in 636a45b, iterated through 33e398a, but the
+> colored/pill styling didn't render visibly in the top bar for the user and
+> was reverted back to plain text in favor of a working indicator. The
+> underlying resilience fixes (async token reads, 429 countdown, stale-data
+> preservation) were kept. Left here for history, not a description of the
+> current UI.
+
 ## Motivation
 
 Panel indicator currently shows plain text (`5h X% · Wk Y%`) with no visual severity cue. User wants an at-a-glance color signal for how close each limit is to being hit.

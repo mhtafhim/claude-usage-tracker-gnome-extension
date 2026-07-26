@@ -27,51 +27,6 @@ function pct(u) {
     return u <= 1 ? Math.round(u * 100) : Math.round(u);
 }
 
-// Gradient anchors. A pill sitting exactly on an anchor gets that pure color;
-// in between it blends toward the next one, so the color drifts continuously
-// as usage climbs.
-const COLOR_STOPS = [
-    {at: 0, rgb: [39, 174, 96]},    // green
-    {at: 50, rgb: [142, 68, 173]},  // purple
-    {at: 70, rgb: [241, 196, 15]},  // yellow
-    {at: 90, rgb: [231, 76, 60]},   // red
-    {at: 100, rgb: [192, 57, 43]},  // deep red
-];
-
-const GAMMA = 2.2;
-
-function textColorFor([r, g, b]) {
-    // Perceived brightness, so text stays readable on any blend.
-    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return lum > 0.6 ? '#000000' : '#ffffff';
-}
-
-function colorForPct(p) {
-    const c = Math.max(0, Math.min(100, p));
-    let lo = COLOR_STOPS[0];
-    let hi = COLOR_STOPS[COLOR_STOPS.length - 1];
-    for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
-        if (c >= COLOR_STOPS[i].at && c <= COLOR_STOPS[i + 1].at) {
-            lo = COLOR_STOPS[i];
-            hi = COLOR_STOPS[i + 1];
-            break;
-        }
-    }
-    const span = hi.at - lo.at;
-    const t = span === 0 ? 0 : (c - lo.at) / span;
-    // Blend in linear light rather than straight sRGB: mid-ramp colors come out
-    // brighter instead of sagging toward grey.
-    const rgb = lo.rgb.map((v, i) => {
-        const a = Math.pow(v / 255, GAMMA);
-        const b = Math.pow(hi.rgb[i] / 255, GAMMA);
-        return Math.round(255 * Math.pow(a + (b - a) * t, 1 / GAMMA));
-    });
-    return {bg: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, fg: textColorFor(rgb)};
-}
-
-const PILL_STYLE = 'border-radius: 8px; padding: 0 6px; margin: 0 2px; font-weight: bold;';
-const BLOCKED_STYLE = `background-color: rgb(231,76,60); color: #ffffff; ${PILL_STYLE}`;
-
 // Anthropic has been seen sending "retry-after: 0" on this endpoint, which
 // isn't a real wait time - treat missing/zero/garbage the same way and fall
 // back to a floor so we don't immediately hammer it again.
@@ -106,26 +61,11 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     _init() {
         super._init(0.0, 'Claude Usage', false);
 
-        this._statusLabel = new St.Label({
+        this._label = new St.Label({
             text: '⏳',
             y_align: Clutter.ActorAlign.CENTER,
         });
-
-        this._sessionPill = new St.Label({y_align: Clutter.ActorAlign.CENTER});
-        this._weeklyPill = new St.Label({y_align: Clutter.ActorAlign.CENTER});
-        this._pillBox = new St.BoxLayout({visible: false});
-        this._pillBox.add_child(this._sessionPill);
-        this._pillBox.add_child(this._weeklyPill);
-
-        this._blockedLabel = new St.Label({
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-            style: BLOCKED_STYLE,
-        });
-
-        this.add_child(this._statusLabel);
-        this.add_child(this._pillBox);
-        this.add_child(this._blockedLabel);
+        this.add_child(this._label);
 
         this._sessionItem = new PopupMenu.PopupMenuItem('5-hour session: —', {reactive: false});
         this._weeklyItem = new PopupMenu.PopupMenuItem('Weekly: —', {reactive: false});
@@ -172,7 +112,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         if (this._destroyed) return;
         if (!token) {
             this._haveData = false;
-            this._showStatus('Claude: no token');
+            this._label.set_text('Claude: no token');
             this._sessionItem.label.set_text('No credentials file found.');
             this._weeklyItem.label.set_text('Run "claude login" first.');
             return;
@@ -209,21 +149,21 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     }
 
     // A rate-limited or timed-out refresh shouldn't blank out numbers we
-    // already have: leave the pills and dropdown showing the last known
+    // already have: leave the panel and dropdown showing the last known
     // values untouched, and only surface the failure when there's nothing
     // to fall back on yet.
     _reportError(panelText, menuText) {
         if (this._haveData) return;
-        this._showStatus(panelText);
+        this._label.set_text(panelText);
         this._sessionItem.label.set_text(menuText);
         this._weeklyItem.label.set_text('—');
     }
 
-    // Rate-limited: count down the server-given Retry-After in a red pill
+    // Rate-limited: count down the server-given Retry-After on the panel
     // instead of polling again right away, then retry the moment it elapses.
     _startCountdown(seconds) {
         let remaining = seconds;
-        this._showBlocked(remaining);
+        this._label.set_text(`Wait ${remaining}s`);
         this._countdownId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             if (this._destroyed) {
                 this._countdownId = null;
@@ -235,7 +175,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 this._refresh();
                 return GLib.SOURCE_REMOVE;
             }
-            this._showBlocked(remaining);
+            this._label.set_text(`Wait ${remaining}s`);
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -247,46 +187,15 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         }
     }
 
-    _showBlocked(remaining) {
-        this._blockedLabel.set_text(`Wait ${remaining}s`);
-        this._blockedLabel.visible = true;
-        this._statusLabel.visible = false;
-        this._pillBox.visible = false;
-    }
-
-    _showStatus(text) {
-        this._statusLabel.set_text(text);
-        this._statusLabel.visible = true;
-        this._pillBox.visible = false;
-        this._blockedLabel.visible = false;
-    }
-
-    _setPill(label, prefix, pctValue) {
-        if (pctValue === null) {
-            label.set_text(`${prefix} N/A`);
-            label.set_style(PILL_STYLE);
-        } else {
-            const {bg, fg} = colorForPct(pctValue);
-            label.set_text(`${prefix} ${pctValue}%`);
-            label.set_style(`background-color: ${bg}; color: ${fg}; ${PILL_STYLE}`);
-        }
-    }
-
     _updateUI(data) {
         const session = data.five_hour ? pct(data.five_hour.utilization) : null;
         const weekly = data.seven_day ? pct(data.seven_day.utilization) : null;
 
-        if (session === null && weekly === null) {
-            this._haveData = false;
-            this._showStatus('Claude: N/A');
-        } else {
-            this._setPill(this._sessionPill, '5h', session);
-            this._setPill(this._weeklyPill, 'Wk', weekly);
-            this._statusLabel.visible = false;
-            this._blockedLabel.visible = false;
-            this._pillBox.visible = true;
-            this._haveData = true;
-        }
+        const parts = [];
+        if (session !== null) parts.push(`5h ${session}%`);
+        if (weekly !== null) parts.push(`Wk ${weekly}%`);
+        this._label.set_text(parts.length ? parts.join('  ·  ') : 'Claude: N/A');
+        this._haveData = parts.length > 0;
 
         if (session !== null) {
             const reset = formatResetTime(data.five_hour.resets_at);
