@@ -25,6 +25,15 @@ function pct(u) {
     return u <= 1 ? Math.round(u * 100) : Math.round(u);
 }
 
+function colorForPct(p) {
+    if (p <= 50) return {bg: '#27ae60', fg: '#ffffff'}; // green
+    if (p <= 70) return {bg: '#8e44ad', fg: '#ffffff'}; // purple
+    if (p <= 90) return {bg: '#f1c40f', fg: '#000000'}; // yellow, dark text for contrast
+    return {bg: '#e74c3c', fg: '#ffffff'};              // red
+}
+
+const PILL_STYLE = 'border-radius: 8px; padding: 0 6px; margin: 0 2px; font-weight: bold;';
+
 function formatResetTime(iso) {
     if (!iso) return '';
     try {
@@ -46,11 +55,19 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     _init() {
         super._init(0.0, 'Claude Usage', false);
 
-        this._label = new St.Label({
+        this._statusLabel = new St.Label({
             text: '⏳',
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this.add_child(this._label);
+
+        this._sessionPill = new St.Label({y_align: Clutter.ActorAlign.CENTER});
+        this._weeklyPill = new St.Label({y_align: Clutter.ActorAlign.CENTER});
+        this._pillBox = new St.BoxLayout({visible: false});
+        this._pillBox.add_child(this._sessionPill);
+        this._pillBox.add_child(this._weeklyPill);
+
+        this.add_child(this._statusLabel);
+        this.add_child(this._pillBox);
 
         this._sessionItem = new PopupMenu.PopupMenuItem('5-hour session: —', {reactive: false});
         this._weeklyItem = new PopupMenu.PopupMenuItem('Weekly: —', {reactive: false});
@@ -92,7 +109,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     _refresh() {
         const token = this._getToken();
         if (!token) {
-            this._label.set_text('Claude: no token');
+            this._showStatus('Claude: no token');
             this._sessionItem.label.set_text('No credentials file found.');
             this._weeklyItem.label.set_text('Run "claude login" first.');
             return;
@@ -108,7 +125,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 const bytes = session.send_and_read_finish(result);
                 const status = message.get_status();
                 if (status !== 200) {
-                    this._label.set_text(`Claude: err ${status}`);
+                    this._showStatus(`Claude: err ${status}`);
                     return;
                 }
                 const text = new TextDecoder('utf-8').decode(bytes.get_data());
@@ -116,19 +133,40 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 this._updateUI(data);
             } catch (e) {
                 logError(e, 'ClaudeUsage: request failed');
-                this._label.set_text('Claude: err');
+                this._showStatus('Claude: err');
             }
         });
+    }
+
+    _showStatus(text) {
+        this._statusLabel.set_text(text);
+        this._statusLabel.visible = true;
+        this._pillBox.visible = false;
+    }
+
+    _setPill(label, prefix, pctValue) {
+        if (pctValue === null) {
+            label.set_text(`${prefix} N/A`);
+            label.set_style(PILL_STYLE);
+        } else {
+            const {bg, fg} = colorForPct(pctValue);
+            label.set_text(`${prefix} ${pctValue}%`);
+            label.set_style(`background-color: ${bg}; color: ${fg}; ${PILL_STYLE}`);
+        }
     }
 
     _updateUI(data) {
         const session = data.five_hour ? pct(data.five_hour.utilization) : null;
         const weekly = data.seven_day ? pct(data.seven_day.utilization) : null;
 
-        const parts = [];
-        if (session !== null) parts.push(`5h ${session}%`);
-        if (weekly !== null) parts.push(`Wk ${weekly}%`);
-        this._label.set_text(parts.length ? parts.join('  ·  ') : 'Claude: N/A');
+        if (session === null && weekly === null) {
+            this._showStatus('Claude: N/A');
+        } else {
+            this._setPill(this._sessionPill, '5h', session);
+            this._setPill(this._weeklyPill, 'Wk', weekly);
+            this._statusLabel.visible = false;
+            this._pillBox.visible = true;
+        }
 
         if (session !== null) {
             const reset = formatResetTime(data.five_hour.resets_at);
