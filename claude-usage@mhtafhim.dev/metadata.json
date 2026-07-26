@@ -1,0 +1,7 @@
+{
+  "uuid": "claude-usage@mhtafhim.dev",
+  "name": "Claude Usage",
+  "description": "Shows your Claude Pro/Max 5-hour and weekly usage limits in the top bar",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/mhtafhim"
+}

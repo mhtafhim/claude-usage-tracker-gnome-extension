@@ -1,0 +1,167 @@
+import GObject from 'gi://GObject';
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import Soup from 'gi://Soup?version=3.0';
+
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+// Candidate paths for Claude Code's OAuth credentials file.
+const CRED_PATHS = [
+    GLib.get_home_dir() + '/.claude/.credentials.json',
+    GLib.get_home_dir() + '/.config/claude/credentials.json',
+];
+
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const REFRESH_SECONDS = 60; // this endpoint rate-limits hard if polled too often
+
+function pct(u) {
+    // API has been seen returning either 0-100 or 0-1. Normalize to 0-100.
+    if (u === null || u === undefined) return null;
+    return u <= 1 ? Math.round(u * 100) : Math.round(u);
+}
+
+function formatResetTime(iso) {
+    if (!iso) return '';
+    try {
+        const dt = GLib.DateTime.new_from_iso8601(iso, null);
+        if (!dt) return '';
+        const local = dt.to_local();
+        const now = GLib.DateTime.new_now_local();
+        const diffH = local.difference(now) / 3600000000;
+        if (diffH < 24)
+            return local.format('resets %-l:%M %p');
+        return local.format('resets %a %-l:%M %p');
+    } catch (e) {
+        return '';
+    }
+}
+
+const ClaudeUsageIndicator = GObject.registerClass(
+class ClaudeUsageIndicator extends PanelMenu.Button {
+    _init() {
+        super._init(0.0, 'Claude Usage', false);
+
+        this._label = new St.Label({
+            text: '⏳',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this.add_child(this._label);
+
+        this._sessionItem = new PopupMenu.PopupMenuItem('5-hour session: —', {reactive: false});
+        this._weeklyItem = new PopupMenu.PopupMenuItem('Weekly: —', {reactive: false});
+        this.menu.addMenuItem(this._sessionItem);
+        this.menu.addMenuItem(this._weeklyItem);
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        const refreshItem = new PopupMenu.PopupMenuItem('Refresh now');
+        refreshItem.connect('activate', () => this._refresh());
+        this.menu.addMenuItem(refreshItem);
+
+        this._httpSession = new Soup.Session();
+        this._timeoutId = null;
+
+        this._refresh();
+        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_SECONDS, () => {
+            this._refresh();
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _getToken() {
+        for (const path of CRED_PATHS) {
+            try {
+                const file = Gio.File.new_for_path(path);
+                if (!file.query_exists(null)) continue;
+                const [ok, contents] = GLib.file_get_contents(path);
+                if (!ok) continue;
+                const text = new TextDecoder('utf-8').decode(contents);
+                const json = JSON.parse(text);
+                const oauth = json.claudeAiOauth || json;
+                if (oauth && oauth.accessToken) return oauth.accessToken;
+            } catch (e) {
+                logError(e, `ClaudeUsage: could not read ${path}`);
+            }
+        }
+        return null;
+    }
+
+    _refresh() {
+        const token = this._getToken();
+        if (!token) {
+            this._label.set_text('Claude: no token');
+            this._sessionItem.label.set_text('No credentials file found.');
+            this._weeklyItem.label.set_text('Run "claude login" first.');
+            return;
+        }
+
+        const message = Soup.Message.new('GET', USAGE_URL);
+        message.request_headers.append('Authorization', `Bearer ${token}`);
+        message.request_headers.append('anthropic-beta', 'oauth-2025-04-20');
+        message.request_headers.append('User-Agent', 'claude-code/1.0.0');
+
+        this._httpSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, result) => {
+            try {
+                const bytes = session.send_and_read_finish(result);
+                const status = message.get_status();
+                if (status !== 200) {
+                    this._label.set_text(`Claude: err ${status}`);
+                    return;
+                }
+                const text = new TextDecoder('utf-8').decode(bytes.get_data());
+                const data = JSON.parse(text);
+                this._updateUI(data);
+            } catch (e) {
+                logError(e, 'ClaudeUsage: request failed');
+                this._label.set_text('Claude: err');
+            }
+        });
+    }
+
+    _updateUI(data) {
+        const session = data.five_hour ? pct(data.five_hour.utilization) : null;
+        const weekly = data.seven_day ? pct(data.seven_day.utilization) : null;
+
+        const parts = [];
+        if (session !== null) parts.push(`5h ${session}%`);
+        if (weekly !== null) parts.push(`Wk ${weekly}%`);
+        this._label.set_text(parts.length ? parts.join('  ·  ') : 'Claude: N/A');
+
+        if (session !== null) {
+            const reset = formatResetTime(data.five_hour.resets_at);
+            this._sessionItem.label.set_text(`5-hour session: ${session}% ${reset}`);
+        } else {
+            this._sessionItem.label.set_text('5-hour session: not available');
+        }
+
+        if (weekly !== null) {
+            const reset = formatResetTime(data.seven_day.resets_at);
+            this._weeklyItem.label.set_text(`Weekly: ${weekly}% ${reset}`);
+        } else {
+            this._weeklyItem.label.set_text('Weekly: not available');
+        }
+    }
+
+    stop() {
+        if (this._timeoutId) {
+            GLib.source_remove(this._timeoutId);
+            this._timeoutId = null;
+        }
+    }
+});
+
+export default class ClaudeUsageExtension extends Extension {
+    enable() {
+        this._indicator = new ClaudeUsageIndicator();
+        Main.panel.addToStatusArea(this.uuid, this._indicator);
+    }
+
+    disable() {
+        this._indicator.stop();
+        this._indicator.destroy();
+        this._indicator = null;
+    }
+}
