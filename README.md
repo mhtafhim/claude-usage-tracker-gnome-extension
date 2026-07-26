@@ -43,7 +43,9 @@ gnome-extensions enable claude-usage@mhtafhim
 
 ## Configuration
 
-Refresh interval is set via `REFRESH_SECONDS` near the top of `extension.js`. Anthropic's usage endpoint rate-limits aggressively if polled too often — 60s is a safe middle ground.
+Refresh interval is set via `REFRESH_SECONDS` near the top of `extension.js`. Anthropic's usage endpoint rate-limits aggressively if polled too often — 180s (3 min) is a safe middle ground.
+
+If the API returns a 429, the panel shows a red `Wait Xs` pill counting down the server's `Retry-After` value and retries automatically the moment it hits zero, instead of silently failing on the next scheduled poll.
 
 ## Troubleshooting
 

@@ -19,7 +19,7 @@ const CRED_PATHS = [
 ];
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
-const REFRESH_SECONDS = 60; // this endpoint rate-limits hard if polled too often
+const REFRESH_SECONDS = 180; // this endpoint rate-limits hard if polled too often
 
 function pct(u) {
     // API has been seen returning either 0-100 or 0-1. Normalize to 0-100.
@@ -70,6 +70,14 @@ function colorForPct(p) {
 }
 
 const PILL_STYLE = 'border-radius: 8px; padding: 0 6px; margin: 0 2px; font-weight: bold;';
+const BLOCKED_STYLE = `background-color: rgb(231,76,60); color: #ffffff; ${PILL_STYLE}`;
+
+function parseRetryAfter(message) {
+    const raw = message.response_headers.get_one('Retry-After');
+    if (!raw) return null;
+    const seconds = parseInt(raw, 10);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
 
 function formatResetTime(iso) {
     if (!iso) return '';
@@ -103,8 +111,15 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._pillBox.add_child(this._sessionPill);
         this._pillBox.add_child(this._weeklyPill);
 
+        this._blockedLabel = new St.Label({
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+            style: BLOCKED_STYLE,
+        });
+
         this.add_child(this._statusLabel);
         this.add_child(this._pillBox);
+        this.add_child(this._blockedLabel);
 
         this._sessionItem = new PopupMenu.PopupMenuItem('5-hour session: —', {reactive: false});
         this._weeklyItem = new PopupMenu.PopupMenuItem('Weekly: —', {reactive: false});
@@ -117,6 +132,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
         this._httpSession = new Soup.Session();
         this._timeoutId = null;
+        this._countdownId = null;
         this._destroyed = false;
         this._haveData = false;
 
@@ -145,6 +161,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
     }
 
     async _refresh() {
+        this._clearCountdown();
         const token = await this._getToken();
         if (this._destroyed) return;
         if (!token) {
@@ -167,6 +184,13 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
                 // Read the property, not get_status(): GJS throws marshalling
                 // codes missing from the Soup.Status enum, such as 429.
                 const status = message.status_code;
+                if (status === 429) {
+                    const retryAfter = parseRetryAfter(message);
+                    if (retryAfter !== null) {
+                        this._startCountdown(retryAfter);
+                        return;
+                    }
+                }
                 if (status !== 200) {
                     this._reportError(`Claude: err ${status}`, `Request failed (HTTP ${status}).`);
                     return;
@@ -192,10 +216,46 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._weeklyItem.label.set_text('—');
     }
 
+    // Rate-limited: count down the server-given Retry-After in a red pill
+    // instead of polling again right away, then retry the moment it elapses.
+    _startCountdown(seconds) {
+        let remaining = seconds;
+        this._showBlocked(remaining);
+        this._countdownId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+            if (this._destroyed) {
+                this._countdownId = null;
+                return GLib.SOURCE_REMOVE;
+            }
+            remaining -= 1;
+            if (remaining <= 0) {
+                this._countdownId = null;
+                this._refresh();
+                return GLib.SOURCE_REMOVE;
+            }
+            this._showBlocked(remaining);
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _clearCountdown() {
+        if (this._countdownId) {
+            GLib.source_remove(this._countdownId);
+            this._countdownId = null;
+        }
+    }
+
+    _showBlocked(remaining) {
+        this._blockedLabel.set_text(`Wait ${remaining}s`);
+        this._blockedLabel.visible = true;
+        this._statusLabel.visible = false;
+        this._pillBox.visible = false;
+    }
+
     _showStatus(text) {
         this._statusLabel.set_text(text);
         this._statusLabel.visible = true;
         this._pillBox.visible = false;
+        this._blockedLabel.visible = false;
     }
 
     _setPill(label, prefix, pctValue) {
@@ -220,6 +280,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
             this._setPill(this._sessionPill, '5h', session);
             this._setPill(this._weeklyPill, 'Wk', weekly);
             this._statusLabel.visible = false;
+            this._blockedLabel.visible = false;
             this._pillBox.visible = true;
             this._haveData = true;
         }
@@ -245,6 +306,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
             GLib.source_remove(this._timeoutId);
             this._timeoutId = null;
         }
+        this._clearCountdown();
         this._httpSession.abort();
     }
 });
