@@ -25,8 +25,8 @@ It reads the OAuth access token that the [Claude Code](https://github.com/anthro
 ## Installation
 
 ```bash
-mkdir -p ~/.local/share/gnome-shell/extensions/claude-usage@example.com
-cp -r claude-usage@example.com/* ~/.local/share/gnome-shell/extensions/claude-usage@example.com/
+mkdir -p ~/.local/share/gnome-shell/extensions/claude-usage@mhtafhim
+cp -r claude-usage@mhtafhim/* ~/.local/share/gnome-shell/extensions/claude-usage@mhtafhim/
 ```
 
 Restart GNOME Shell:
@@ -36,7 +36,7 @@ Restart GNOME Shell:
 Then enable it:
 
 ```bash
-gnome-extensions enable claude-usage@example.com
+gnome-extensions enable claude-usage@mhtafhim
 ```
 
 ## Configuration
