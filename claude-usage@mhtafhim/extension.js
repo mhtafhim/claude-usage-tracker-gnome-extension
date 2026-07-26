@@ -10,6 +10,8 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+Gio._promisify(Gio.File.prototype, 'load_contents_async');
+
 // Candidate paths for Claude Code's OAuth credentials file.
 const CRED_PATHS = [
     GLib.get_home_dir() + '/.claude/.credentials.json',
@@ -88,26 +90,25 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         });
     }
 
-    _getToken() {
+    async _getToken() {
         for (const path of CRED_PATHS) {
             try {
                 const file = Gio.File.new_for_path(path);
-                if (!file.query_exists(null)) continue;
-                const [ok, contents] = GLib.file_get_contents(path);
-                if (!ok) continue;
+                const [contents] = await file.load_contents_async(null);
                 const text = new TextDecoder('utf-8').decode(contents);
                 const json = JSON.parse(text);
                 const oauth = json.claudeAiOauth || json;
                 if (oauth && oauth.accessToken) return oauth.accessToken;
             } catch (e) {
-                logError(e, `ClaudeUsage: could not read ${path}`);
+                if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
+                    logError(e, `ClaudeUsage: could not read ${path}`);
             }
         }
         return null;
     }
 
-    _refresh() {
-        const token = this._getToken();
+    async _refresh() {
+        const token = await this._getToken();
         if (!token) {
             this._showStatus('Claude: no token');
             this._sessionItem.label.set_text('No credentials file found.');
@@ -188,6 +189,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
             GLib.source_remove(this._timeoutId);
             this._timeoutId = null;
         }
+        this._httpSession.abort();
     }
 });
 
