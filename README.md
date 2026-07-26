@@ -13,6 +13,10 @@ I kept switching over to `/usage` in Claude Code or digging into settings just t
 - Refreshes automatically every 60 seconds (configurable in `extension.js`).
 - Manual "Refresh now" option in the dropdown.
 
+## Roadmap
+
+- **Colored usage pills** — color-coded background (green/purple/yellow/red by % used) for the 5-hour and weekly indicators, so severity is visible at a glance. Designed, not yet implemented — see [spec](docs/superpowers/specs/2026-07-26-colored-pills-design.md).
+
 ## How it works
 
 It reads the OAuth access token that the [Claude Code](https://github.com/anthropics/claude-code) CLI already stores locally after you run `claude login` (`~/.claude/.credentials.json` or `~/.config/claude/credentials.json`), and uses it to call Anthropic's usage endpoint (`https://api.anthropic.com/api/oauth/usage`). No separate login, no credentials stored by the extension itself — it just reuses the session you already have.
